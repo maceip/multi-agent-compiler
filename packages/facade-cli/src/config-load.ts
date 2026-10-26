@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ProviderPort, ZfacadeConfig } from "@zfacade/contracts";
+import type { ProviderConfig, ProviderPort, ZfacadeConfig } from "@zfacade/contracts";
 import { validateConfig, ZfacadeError } from "@zfacade/contracts";
 import { stateRoot } from "@zfacade/core";
-import { DeterministicProvider, OpenAICompatibleProvider } from "@zfacade/agent";
+import { DeterministicProvider, OpenAICompatibleProvider, TinkerProvider } from "@zfacade/agent";
 
 /** Trusted user config only (never workspace files): ~/.zfacade/config.json or --config path. */
 export function loadConfig(explicitPath?: string, env: NodeJS.ProcessEnv = process.env): ZfacadeConfig {
@@ -20,19 +20,45 @@ export function loadConfig(explicitPath?: string, env: NodeJS.ProcessEnv = proce
 
 const OPENAI_DEFAULT_BASE = "https://api.openai.com/v1";
 
+function resolveApiKey(keyName: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  if (!keyName) return undefined;
+  if (env[keyName]) return env[keyName];
+  for (const candidate of ["/Users/mac/zfacade/.env", "/Users/mac/zfacade-tinker/.env"]) {
+    const parsed = loadDotEnv(candidate, env);
+    if (parsed[keyName]) return parsed[keyName];
+  }
+  return undefined;
+}
+
+export function buildProviderFromSpec(p: ProviderConfig, env: NodeJS.ProcessEnv = process.env): ProviderPort {
+  if (p.kind === "deterministic-test") return DeterministicProvider.fromFile(p.deterministicScriptPath!);
+  if (p.kind === "tinker") {
+    const apiKeyEnv = p.apiKeyEnv ?? "TINKER_API_KEY";
+    const apiKey = resolveApiKey(apiKeyEnv, env);
+    return new TinkerProvider(p.modelId!, p.checkpointPath, p.renderer ?? "qwen3_5_disable_thinking", apiKey);
+  }
+  const apiKeyEnv = p.apiKeyEnv ?? (p.kind === "openai" ? "OPENAI_API_KEY" : undefined);
+  const apiKey = resolveApiKey(apiKeyEnv, env);
+  if (p.kind === "openai") {
+    return new OpenAICompatibleProvider(p.baseUrl ?? OPENAI_DEFAULT_BASE, p.modelId!, apiKey);
+  }
+  return new OpenAICompatibleProvider(p.baseUrl!, p.modelId!, apiKey);
+}
+
 export function buildProvider(cfg: ZfacadeConfig, env: NodeJS.ProcessEnv = process.env): ProviderPort {
   const p = cfg.provider;
   if (!p) {
     throw new ZfacadeError("ProviderNotConfigured",
       "no provider configured. For live OpenAI testing set provider.kind=\"openai\" in ~/.zfacade/config.json (or --config) and OPENAI_API_KEY in the environment. deterministic-test is for offline tests only.");
   }
-  if (p.kind === "deterministic-test") return DeterministicProvider.fromFile(p.deterministicScriptPath!);
-  const apiKeyEnv = p.apiKeyEnv ?? (p.kind === "openai" ? "OPENAI_API_KEY" : undefined);
-  const apiKey = apiKeyEnv ? env[apiKeyEnv] : undefined;
-  if (p.kind === "openai") {
-    return new OpenAICompatibleProvider(p.baseUrl ?? OPENAI_DEFAULT_BASE, p.modelId!, apiKey);
+  return buildProviderFromSpec(p, env);
+}
+
+export function buildOrchestratorProvider(cfg: ZfacadeConfig, env: NodeJS.ProcessEnv = process.env): ProviderPort {
+  if (cfg.orchestratorProvider) {
+    return buildProviderFromSpec(cfg.orchestratorProvider, env);
   }
-  return new OpenAICompatibleProvider(p.baseUrl!, p.modelId!, apiKey);
+  return buildProvider(cfg, env);
 }
 
 /**

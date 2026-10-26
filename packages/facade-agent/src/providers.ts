@@ -1,6 +1,10 @@
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { promisify } from "node:util";
 import type { ModelRequest, ModelResponse, ModelToolCall, ProviderPort } from "@zfacade/contracts";
 import { ZfacadeError } from "@zfacade/contracts";
+
+const execFileAsync = promisify(execFile);
 
 interface SseToolAccum { id: string; name: string; argsText: string }
 
@@ -151,5 +155,117 @@ export class DeterministicProvider implements ProviderPort {
       toolCalls: (step.toolCalls ?? []).map((t, i) => ({ id: `det_${this.idx}_${i}`, name: t.name, arguments: t.arguments })),
       finishReason: step.finishReason ?? (step.toolCalls?.length ? "tool_calls" : "stop"),
     };
+  }
+}
+
+const TINKER_SAMPLE_SCRIPT = `
+import asyncio, json, os, sys
+from pathlib import Path
+
+payload = json.loads(sys.stdin.read())
+model = payload["modelId"]
+checkpoint_path = payload.get("checkpointPath")
+renderer_name = payload.get("renderer") or "qwen3_5_disable_thinking"
+max_tokens = int(payload.get("maxTokens") or 768)
+messages = payload["messages"]
+tools = payload["tools"]
+
+import tinker
+from tinker_cookbook.renderers import get_renderer, get_text_content
+from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+async def run():
+    client = tinker.ServiceClient()
+    if checkpoint_path:
+        meta = json.loads(Path(checkpoint_path).read_text())
+        sampler = await client.create_sampling_client_async(model_path=meta["sampler_path"])
+    else:
+        sampler = await client.create_sampling_client_async(base_model=model)
+    renderer = get_renderer(renderer_name, get_tokenizer(model))
+    oai_tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["parameters"]}} for t in tools]
+    sys_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
+    conv = renderer.create_conversation_prefix_with_tools(oai_tools, sys_msg) if oai_tools else [{"role": "system", "content": sys_msg}]
+    for m in messages:
+        if m["role"] == "system":
+            continue
+        if m["role"] == "assistant" and m.get("toolCalls"):
+            tcs = [ToolCall(id=c["id"], function=ToolCall.FunctionBody(name=c["name"], arguments=json.dumps(c["arguments"]))) for c in m["toolCalls"]]
+            conv.append({"role": "assistant", "content": m.get("content", ""), "tool_calls": tcs})
+        elif m["role"] == "tool":
+            conv.append({"role": "tool", "name": m.get("name", ""), "tool_call_id": m.get("toolCallId", ""), "content": m.get("content", "")})
+        else:
+            conv.append({"role": m["role"], "content": m.get("content", "")})
+    prompt = renderer.build_generation_prompt(conv)
+    resp = await sampler.sample_async(
+        prompt=prompt,
+        num_samples=1,
+        sampling_params=tinker.SamplingParams(max_tokens=max_tokens, temperature=0.2, stop=renderer.get_stop_sequences()),
+    )
+    seq = resp.sequences[0]
+    tokens = list(seq.tokens)
+    msg, term = renderer.parse_response(tokens)
+    out_calls = []
+    for i, c in enumerate(msg.get("tool_calls") or []):
+        try:
+            args = json.loads(c.function.arguments)
+        except Exception:
+            args = {}
+        out_calls.append({"id": getattr(c, "id", None) or f"tinker_call_{i}", "name": c.function.name, "arguments": args})
+    text = get_text_content(msg) if isinstance(msg, dict) else ""
+    print(json.dumps({
+        "modelId": f"tinker:{model}" + (f"@{Path(checkpoint_path).stem}" if checkpoint_path else ""),
+        "text": text,
+        "toolCalls": out_calls,
+        "finishReason": "tool_calls" if out_calls else ("stop" if term.is_clean else "length"),
+        "usage": {"promptTokens": prompt.length, "completionTokens": len(tokens), "totalTokens": prompt.length + len(tokens)},
+    }))
+
+asyncio.run(run())
+`;
+
+/** Native Tinker provider for sampling base or fine-tuned LoRA orchestrator checkpoints. */
+export class TinkerProvider implements ProviderPort {
+  readonly isTestDouble = false;
+  readonly id: string;
+  private readonly pythonBin: string;
+
+  constructor(
+    private readonly modelId: string,
+    private readonly checkpointPath: string | undefined,
+    private readonly renderer: string = "qwen3_5_disable_thinking",
+    private readonly apiKey: string | undefined = undefined,
+    pythonBin?: string,
+  ) {
+    this.id = checkpointPath ? `tinker:${modelId}@${checkpointPath}` : `tinker:${modelId}`;
+    this.pythonBin = pythonBin ?? "/Users/mac/zfacade-tinker/.venv/bin/python";
+  }
+
+  async complete(request: ModelRequest): Promise<ModelResponse> {
+    if (!this.apiKey && !process.env.TINKER_API_KEY) {
+      throw new ZfacadeError("ProviderError", "TINKER_API_KEY is required for TinkerProvider");
+    }
+    const payload = JSON.stringify({
+      modelId: this.modelId,
+      checkpointPath: this.checkpointPath,
+      renderer: this.renderer,
+      maxTokens: request.maxTokens ?? 768,
+      messages: request.messages,
+      tools: request.tools,
+    });
+    const childPromise = execFileAsync(this.pythonBin, ["-c", TINKER_SAMPLE_SCRIPT], {
+      env: {
+        ...process.env,
+        ...(this.apiKey ? { TINKER_API_KEY: this.apiKey } : {}),
+      },
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    childPromise.child.stdin?.write(payload);
+    childPromise.child.stdin?.end();
+    const { stdout } = await childPromise;
+    const lines = stdout.trim().split("\n").filter(Boolean);
+    const lastLine = lines[lines.length - 1];
+    if (!lastLine) throw new ZfacadeError("ProviderError", "empty response from TinkerProvider");
+    return JSON.parse(lastLine) as ModelResponse;
   }
 }

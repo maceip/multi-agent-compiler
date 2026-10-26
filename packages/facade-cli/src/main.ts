@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { EXIT, FACADE_VERSION, ZfacadeError, type Grant, type ToolName } from "@zfacade/contracts";
 import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
 import { loadConfig } from "./config-load.js";
@@ -8,11 +9,12 @@ import { runOrchestratedTask } from "./orchestrate.js";
 import { serveBridge } from "./bridge.js";
 import { auditTraining } from "./bridge-transform.js";
 
-const HELP = `zfacade ${FACADE_VERSION} — engine-owned CLI coding agent (Phase 1 slice; local-provider A1 gate pending)
+const HELP = `zfacade ${FACADE_VERSION} — facade-driven CLI coding agent
 
 Usage:
-  zfacade run [--workspace DIR] [--config FILE] [--grant Tool:match ...] <task>
   zfacade orchestrate [--workspace DIR] [--config FILE] [--script FILE] [--grant Tool:match ...] <task>
+  zfacade repl [--workspace DIR] [--config FILE] [--grant Tool:match ...]
+  zfacade run [--facade] [--workspace DIR] [--config FILE] [--grant Tool:match ...] <task>
   zfacade inspect [--workspace DIR] [--run RUN_ID] [--json]
   zfacade sessions [--workspace DIR] [--json]
   zfacade recover [--workspace DIR] [--reconcile OP_ID:mark-completed|retry|abandon] [--json]
@@ -48,6 +50,8 @@ async function main(argv: string[]): Promise<number> {
     if (json) process.stdout.write(JSON.stringify(value) + "\n"); else pretty();
   };
   if (command === "run") {
+    const useFacade = args.includes("--facade");
+    for (let i = args.length - 1; i >= 0; i--) if (args[i] === "--facade") args.splice(i, 1);
     const configPath = takeFlag(args, "--config");
     const grantArgs = takeAll(args, "--grant");
     const task = args.join(" ").trim();
@@ -68,6 +72,16 @@ async function main(argv: string[]): Promise<number> {
       }
     }
     cfg.grants = grants;
+    if (useFacade || cfg.orchestratorProvider !== undefined) {
+      const outcome = await runOrchestratedTask({
+        workspace, task, config: cfg,
+        onEvent: (line) => process.stderr.write(`  ${line}\n`),
+      });
+      emit(outcome, () => {
+        process.stdout.write(`${outcome.status}: ${outcome.summary}\nrun: ${outcome.runId}\norchestrator: ${outcome.orchestratorLabel}\nworker: ${outcome.workerLabel}\n`);
+      });
+      return outcome.exitCode;
+    }
     const outcome = await runTask({
       workspace, task, config: cfg,
       onEvent: (line) => process.stderr.write(`  ${line}\n`),
@@ -78,6 +92,42 @@ async function main(argv: string[]): Promise<number> {
       if (outcome.holdOperationIds.length) process.stdout.write(`holds: ${outcome.holdOperationIds.join(", ")}\n`);
     });
     return outcome.exitCode;
+  }
+  if (command === "repl") {
+    const configPath = takeFlag(args, "--config");
+    const grantArgs = takeAll(args, "--grant");
+    const cfg = loadConfig(configPath);
+    const grants: Grant[] = [...(cfg.grants ?? [])];
+    grantArgs.forEach((g, i) => {
+      const idx = g.indexOf(":");
+      if (idx <= 0) throw new ZfacadeError("ConfigInvalid", `--grant needs Tool:match, got ${g}`);
+      grants.push({ id: `cli-${i}`, tool: g.slice(0, idx) as ToolName, match: g.slice(idx + 1) });
+    });
+    if (grants.length === 0) {
+      for (const tool of ["Write", "Edit", "ApplyPatch"] as ToolName[]) {
+        grants.push({ id: `default-${tool}`, tool, match: "." });
+      }
+    }
+    cfg.grants = grants;
+    process.stdout.write(`zfacade interactive facade REPL — workspace: ${workspace}\nType a coding task or 'exit' to quit.\n`);
+    const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: "zfacade> " });
+    rl.prompt();
+    for await (const line of rl) {
+      const task = line.trim();
+      if (!task) { rl.prompt(); continue; }
+      if (task === "exit" || task === "quit") break;
+      try {
+        const outcome = await runOrchestratedTask({
+          workspace, task, config: cfg,
+          onEvent: (ev) => process.stderr.write(`  ${ev}\n`),
+        });
+        process.stdout.write(`\n[${outcome.status}] ${outcome.summary}\n(run=${outcome.runId}, turns=${outcome.workflowTurns}, reused=${outcome.reusedNodes})\n\n`);
+      } catch (e) {
+        process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);
+      }
+      rl.prompt();
+    }
+    return 0;
   }
   if (command === "orchestrate") {
     const configPath = takeFlag(args, "--config");

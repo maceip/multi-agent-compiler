@@ -133,4 +133,86 @@ describe("language-agnostic Orchestrator -> Worker workflow paradigm", () => {
     expect(artifact.report.filesChanged).toEqual(["calc.py"]);
     expect(artifact.exitCode).toBe(0);
   });
+
+  it("supports multi-turn amend_workflow with cached node reuse when the first workflow's verification fails", async () => {
+    const ws = tempDir("zfacade-amend-ws-");
+    const home = tempDir("zfacade-amend-home-");
+    writeFileSync(
+      join(ws, "math.py"),
+      "def add(a: int, b: int) -> int:\n    return a - b\n\ndef double(x: int) -> int:\n    return x * 3\n",
+    );
+    writeFileSync(
+      join(ws, "test_math.py"),
+      "import unittest\nfrom math import add, double\n\nclass TestMath(unittest.TestCase):\n    def test_both(self):\n        self.assertEqual(add(2, 3), 5)\n        self.assertEqual(double(4), 8)\n\nif __name__ == '__main__':\n    unittest.main()\n",
+    );
+
+    const firstWorkflow = [
+      "interface FixReport { fixed: boolean; summary: string; }",
+      'phase("Inspect");',
+      'const pyFiles = await files.glob("*.py");',
+      'phase("Attempt1");',
+      'const coder = agent("coder", { system: "You are a Python engineer." });',
+      'const rep1 = await coder.ask<FixReport>("Fix add in math.py");',
+      'phase("Verify");',
+      'const check = await world.run("python3", ["test_math.py"]);',
+      "return { report: rep1, exitCode: check.exitCode };",
+    ].join("\n");
+
+    const amendedWorkflow = [
+      "interface FixReport { fixed: boolean; summary: string; }",
+      'phase("Inspect");',
+      'const pyFiles = await files.glob("*.py");',
+      'phase("Attempt1");',
+      'const coder = agent("coder", { system: "You are a Python engineer." });',
+      'const rep1 = await coder.ask<FixReport>("Fix add in math.py");',
+      'phase("Attempt2");',
+      'const rep2 = await coder.ask<FixReport>("Fix double in math.py as well");',
+      'phase("Verify");',
+      'const check = await world.run("python3", ["test_math.py"]);',
+      "return { report: rep2, exitCode: check.exitCode, files: pyFiles };",
+    ].join("\n");
+
+    const orchestrator = new DeterministicProvider([
+      { toolCalls: [{ name: "submit_workflow", arguments: { ts_code: firstWorkflow } }] },
+      { toolCalls: [{ name: "amend_workflow", arguments: { ts_code: amendedWorkflow } }] },
+    ]);
+
+    // Worker only gets called ONCE in run 1 (fixing `add`) and ONCE in run 2 (fixing `double`),
+    // because `files.glob("*.py")` and `coder.ask("Fix add in math.py")` are replayed from the cache in run 2!
+    const worker = new DeterministicProvider([
+      {
+        toolCalls: [
+          { name: "Edit", arguments: { path: "math.py", old: "return a - b", new: "return a + b" } },
+        ],
+      },
+      { text: JSON.stringify({ fixed: true, summary: "Fixed add" }) },
+      {
+        toolCalls: [
+          { name: "Edit", arguments: { path: "math.py", old: "return x * 3", new: "return x * 2" } },
+        ],
+      },
+      { text: JSON.stringify({ fixed: true, summary: "Fixed double" }) },
+    ]);
+
+    const outcome = await runOrchestratedTask({
+      workspace: ws,
+      task: "Fix math.py so python3 test_math.py passes.",
+      config: {
+        grants: [
+          { id: "edit-all", tool: "Edit", match: "." },
+          { id: "write-all", tool: "Write", match: "." },
+        ],
+      },
+      orchestratorProvider: orchestrator,
+      workerProvider: worker,
+      env: { ...process.env, ZFACADE_HOME: home },
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.workflowTurns).toBe(2);
+    expect(outcome.runHistory.length).toBe(2);
+    expect(outcome.reusedNodes).toBeGreaterThanOrEqual(2);
+    const artifact = outcome.artifact as { exitCode: number };
+    expect(artifact.exitCode).toBe(0);
+  });
 });
