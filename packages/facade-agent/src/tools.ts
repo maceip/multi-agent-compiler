@@ -414,10 +414,13 @@ export interface ArgvResult { exitCode: number; stdout: string; stderr: string; 
 /** Fixed-argv process execution (never a shell). Kills the whole process group on timeout/abort. */
 export function runArgv(argv: string[], cwd: string, timeoutMs: number, signal?: AbortSignal, sandbox?: SandboxSpec): Promise<ArgvResult> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const env = Object.fromEntries(
-      ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]
-        .filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k] as string]),
-    );
+    const env: Record<string, string> = {
+      PYTHONDONTWRITEBYTECODE: "1",
+      ...Object.fromEntries(
+        ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]
+          .filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k] as string]),
+      ),
+    };
     const effective = sandbox ? wrapArgv(sandbox, argv) : argv;
     if (sandbox) Object.assign(env, sandboxEnv(sandbox));
     const child = spawn(effective[0]!, effective.slice(1), { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -450,7 +453,12 @@ export function runArgv(argv: string[], cwd: string, timeoutMs: number, signal?:
   });
 }
 
-const SKIP_DIRS = new Set([".git", "node_modules", ".zcode", "dist", ".turbo"]);
+const SKIP_DIRS = new Set([
+  ".git", "node_modules", ".zcode", "dist", ".turbo",
+  // Non-JS toolchain output and vendored third-party trees.
+  "vendor", "target", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
+  ".gradle", ".next", "coverage", ".idea", ".cargo", "Pods", ".tox",
+]);
 
 export function globFiles(root: string, pattern: string): string[] {
   if (pattern.includes("..")) throw new ToolDeniedError("Glob pattern escapes workspace");

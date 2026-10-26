@@ -4,6 +4,7 @@ import { EXIT, FACADE_VERSION, ZfacadeError, type Grant, type ToolName } from "@
 import { analyzeWorkflowScript } from "@zcode/dynamic-workflow";
 import { loadConfig } from "./config-load.js";
 import { inspect, recover, runTask } from "./coordinator.js";
+import { runOrchestratedTask } from "./orchestrate.js";
 import { serveBridge } from "./bridge.js";
 import { auditTraining } from "./bridge-transform.js";
 
@@ -11,6 +12,7 @@ const HELP = `zfacade ${FACADE_VERSION} — engine-owned CLI coding agent (Phase
 
 Usage:
   zfacade run [--workspace DIR] [--config FILE] [--grant Tool:match ...] <task>
+  zfacade orchestrate [--workspace DIR] [--config FILE] [--script FILE] [--grant Tool:match ...] <task>
   zfacade inspect [--workspace DIR] [--run RUN_ID] [--json]
   zfacade sessions [--workspace DIR] [--json]
   zfacade recover [--workspace DIR] [--reconcile OP_ID:mark-completed|retry|abandon] [--json]
@@ -57,12 +59,57 @@ async function main(argv: string[]): Promise<number> {
       if (idx <= 0) throw new ZfacadeError("ConfigInvalid", `--grant needs Tool:match, got ${g}`);
       grants.push({ id: `cli-${i}`, tool: g.slice(0, idx) as ToolName, match: g.slice(idx + 1) });
     });
+    // With no grants configured at all, default to the whole workspace so a first
+    // run works. Bash is not opened up here: it stays under the command classifier,
+    // which allows read-only and project build/test verbs and asks for the rest.
+    if (grants.length === 0) {
+      for (const tool of ["Write", "Edit", "ApplyPatch"] as ToolName[]) {
+        grants.push({ id: `default-${tool}`, tool, match: "." });
+      }
+    }
     cfg.grants = grants;
-    const outcome = await runTask({ workspace, task, config: cfg });
+    const outcome = await runTask({
+      workspace, task, config: cfg,
+      onEvent: (line) => process.stderr.write(`  ${line}\n`),
+    });
     emit(outcome, () => {
       process.stdout.write(`${outcome.status}: ${outcome.summary}\nrun: ${outcome.runId}\nprovider: ${outcome.providerLabel}\n`);
       if (outcome.pendingQuestionIds.length) process.stdout.write(`pending: ${outcome.pendingQuestionIds.join(", ")}\n`);
       if (outcome.holdOperationIds.length) process.stdout.write(`holds: ${outcome.holdOperationIds.join(", ")}\n`);
+    });
+    return outcome.exitCode;
+  }
+  if (command === "orchestrate") {
+    const configPath = takeFlag(args, "--config");
+    const scriptPath = takeFlag(args, "--script");
+    const grantArgs = takeAll(args, "--grant");
+    const task = args.join(" ").trim();
+    if (!task) { process.stderr.write("zfacade orchestrate: missing task\n"); return EXIT.infra; }
+    const cfg = loadConfig(configPath);
+    const grants: Grant[] = [...(cfg.grants ?? [])];
+    grantArgs.forEach((g, i) => {
+      const idx = g.indexOf(":");
+      if (idx <= 0) throw new ZfacadeError("ConfigInvalid", `--grant needs Tool:match, got ${g}`);
+      grants.push({ id: `cli-${i}`, tool: g.slice(0, idx) as ToolName, match: g.slice(idx + 1) });
+    });
+    if (grants.length === 0) {
+      for (const tool of ["Write", "Edit", "ApplyPatch"] as ToolName[]) {
+        grants.push({ id: `default-${tool}`, tool, match: "." });
+      }
+    }
+    cfg.grants = grants;
+    const scriptTextOverride = scriptPath ? readFileSync(scriptPath, "utf8") : undefined;
+    const outcome = await runOrchestratedTask({
+      workspace,
+      task,
+      config: cfg,
+      ...(scriptTextOverride ? { scriptTextOverride } : {}),
+      onEvent: (line) => process.stderr.write(`  ${line}\n`),
+    });
+    emit(outcome, () => {
+      process.stdout.write(
+        `${outcome.status}: ${outcome.summary}\nrun: ${outcome.runId}\ncompile-attempts: ${outcome.compileAttempts}\norchestrator: ${outcome.orchestratorLabel}\nworker: ${outcome.workerLabel}\n`,
+      );
     });
     return outcome.exitCode;
   }

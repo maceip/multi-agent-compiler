@@ -219,9 +219,14 @@ export class BoundedDriver implements WorkflowDriver {
     this.stepCount += 1;
     try {
       sink.askExecuting(instance);
-      sessions.appendMessage(session.id, "user", { role: "user", content: message.instructions }, key);
+      const initialContent = message.typed && message.schema !== undefined
+        ? `${message.instructions}\n\nYou may call workspace tools (Read, Write, Edit, ApplyPatch, Bash, Grep, Glob) across as many turns as needed to complete the task in whatever language the workspace uses. When you are completely finished and calling no more tools, your final reply text MUST be ONLY a valid JSON object matching this JSON Schema (no markdown fences, no extra prose):\n${JSON.stringify(message.schema)}`
+        : message.instructions;
+      sessions.appendMessage(session.id, "user", { role: "user", content: initialContent }, key);
       let repairs = 0;
+      let toolTurns = 0;
       const maxRepairs = this.deps.maxStepsPerAskRepair ?? 2;
+      const maxToolTurns = 30;
       for (;;) {
         const response = await provider.complete({
           messages: this.transcript(session.id), tools: CODING_TOOLS, signal: controller.signal,
@@ -290,14 +295,36 @@ export class BoundedDriver implements WorkflowDriver {
           this.stampBoundary(instance, session.id);
           return;
         }
-        // Typed ask: submit the model's JSON payload; bounded repair rounds.
+        // Typed ask: if the worker agent called tools on this turn, continue the loop
+        // so it can observe tool outputs and finish the task before submitting JSON.
+        if (toolCalls.length > 0) {
+          toolTurns += 1;
+          if (toolTurns > maxToolTurns) {
+            this.failedAttempts += 1;
+            sink.askFailed(instance, new WorkflowError("DriverError", `exceeded max tool turns (${maxToolTurns}) in typed ask`));
+            return;
+          }
+          continue;
+        }
+        // Typed ask final reply: strip optional outer markdown fence, then parse JSON.
+        let cleanedText = response.text.trim();
+        const fenceMatch = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/i.exec(cleanedText);
+        if (fenceMatch?.[1]) cleanedText = fenceMatch[1].trim();
         let payload: unknown;
-        try { payload = JSON.parse(response.text) as unknown; }
+        try { payload = JSON.parse(cleanedText) as unknown; }
         catch { payload = undefined; }
         if (payload === undefined) {
           this.failedAttempts += 1;
-          sink.askFailed(instance, new WorkflowError("ValidationFailed", "typed ask reply was not valid JSON"));
-          return;
+          if (repairs >= maxRepairs) {
+            sink.askFailed(instance, new WorkflowError("ValidationFailed", "typed ask reply was not valid JSON"));
+            return;
+          }
+          repairs += 1;
+          sessions.appendMessage(session.id, "user", {
+            role: "user",
+            content: "Your previous reply was not valid JSON. Reply now with ONLY a valid JSON object matching the required JSON Schema (no markdown fences or prose).",
+          }, key);
+          continue;
         }
         const verdictPromise = new Promise<SubmitVerdict>((res) => this.submitWaiters.set(key, res));
         sink.askSubmitAttempted(instance, payload);
