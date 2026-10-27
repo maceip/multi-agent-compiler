@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 340" width="100%" height="340">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="pinkGumdrop" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f472b6"/>
+      <stop offset="100%" stop-color="#db2777"/>
+    </linearGradient>
+    <linearGradient id="mintGumdrop" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Background Card -->
+  <rect x="8" y="8" width="864" height="324" rx="20" fill="url(#bg)" stroke="#334155" stroke-width="2"/>
+
+  <!-- Left Gumdrop: Tiny 4B Orchestrator -->
+  <g transform="translate(65, 115)" filter="url(#shadow)">
+    <!-- Gumdrop dome body -->
+    <path d="M 20 120 C 20 35, 45 10, 75 10 C 105 10, 130 35, 130 120 Q 130 138 110 138 L 40 138 Q 20 138 20 120 Z" fill="url(#pinkGumdrop)"/>
+    <!-- Sugar sparkle highlights -->
+    <ellipse cx="55" cy="38" rx="12" ry="6" transform="rotate(-25 55 38)" fill="#fbcfe8" opacity="0.65"/>
+    <circle cx="95" cy="35" r="3" fill="#fbcfe8" opacity="0.7"/>
+    <!-- Eyes -->
+    <circle cx="58" cy="75" r="6" fill="#0f172a"/>
+    <circle cx="92" cy="75" r="6" fill="#0f172a"/>
+    <circle cx="60" cy="73" r="2" fill="#ffffff"/>
+    <circle cx="94" cy="73" r="2" fill="#ffffff"/>
+    <!-- Smile -->
+    <path d="M 66 92 Q 75 101 84 92" fill="none" stroke="#0f172a" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <text x="140" y="282" text-anchor="middle" fill="#f9a8d4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="bold">Tiny Gumdrop (4B)</text>
+  <text x="140" y="302" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="12">Only knows ~10 facade functions</text>
+
+  <!-- Center: Compiled Workflow Bubble + Arrow -->
+  <g transform="translate(245, 40)" filter="url(#shadow)">
+    <rect x="0" y="0" width="390" height="190" rx="14" fill="#090d16" stroke="#475569" stroke-width="1.5"/>
+    <rect x="0" y="0" width="390" height="30" rx="14" fill="#1e293b"/>
+    <circle cx="18" cy="15" r="5" fill="#f43f5e"/>
+    <circle cx="34" cy="15" r="5" fill="#f59e0b"/>
+    <circle cx="50" cy="15" r="5" fill="#10b981"/>
+    <text x="205" y="19" text-anchor="middle" fill="#cbd5e1" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">mac workflow compiler (TypeScript facade)</text>
+
+    <text x="18" y="54" fill="#c084fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">phase<tspan fill="#e2e8f0">(</tspan><tspan fill="#86efac">"Inspect"</tspan><tspan fill="#e2e8f0">);</tspan></text>
+    <text x="18" y="74" fill="#93c5fd" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">const <tspan fill="#e2e8f0">py = </tspan><tspan fill="#c084fc">await </tspan><tspan fill="#38bdf8">files.glob</tspan><tspan fill="#e2e8f0">(</tspan><tspan fill="#86efac">"**/*.py"</tspan><tspan fill="#e2e8f0">);</tspan></text>
+    <text x="18" y="98" fill="#c084fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">phase<tspan fill="#e2e8f0">(</tspan><tspan fill="#86efac">"Delegate"</tspan><tspan fill="#e2e8f0">);</tspan></text>
+    <text x="18" y="118" fill="#93c5fd" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">const <tspan fill="#e2e8f0">coder = </tspan><tspan fill="#38bdf8">agent</tspan><tspan fill="#e2e8f0">(</tspan><tspan fill="#86efac">"coder"</tspan><tspan fill="#e2e8f0">);</tspan></text>
+    <text x="18" y="138" fill="#93c5fd" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">const <tspan fill="#e2e8f0">res = </tspan><tspan fill="#c084fc">await </tspan><tspan fill="#f472b6">coder.ask&lt;FixResult&gt;</tspan><tspan fill="#e2e8f0">(</tspan></text>
+    <text x="30" y="156" fill="#86efac" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">`Fix the bug in ${py.join(", ")}`</text>
+    <text x="18" y="174" fill="#e2e8f0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">);</text>
+  </g>
+
+  <!-- Arrows -->
+  <path d="M 198 165 L 238 145" fill="none" stroke="#f472b6" stroke-width="3" stroke-dasharray="5,4"/>
+  <path d="M 642 145 L 682 165" fill="none" stroke="#34d399" stroke-width="3"/>
+  <polygon points="684,166 673,157 676,169" fill="#34d399"/>
+
+  <!-- Return Arrow -->
+  <path d="M 675 235 Q 440 275 205 235" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="6,4"/>
+  <rect x="335" y="242" width="210" height="24" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="1"/>
+  <text x="440" y="258" text-anchor="middle" fill="#38bdf8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11">returns typed JSON &lt;FixResult&gt;</text>
+
+  <!-- Right Gumdrop: Worker Coding Agent -->
+  <g transform="translate(665, 115)" filter="url(#shadow)">
+    <!-- Gumdrop dome body -->
+    <path d="M 20 120 C 20 35, 45 10, 75 10 C 105 10, 130 35, 130 120 Q 130 138 110 138 L 40 138 Q 20 138 20 120 Z" fill="url(#mintGumdrop)"/>
+    <!-- Hardhat / Builder Visor Rim -->
+    <ellipse cx="55" cy="38" rx="12" ry="6" transform="rotate(-25 55 38)" fill="#a7f3d0" opacity="0.65"/>
+    <!-- Eyes -->
+    <circle cx="58" cy="75" r="6" fill="#0f172a"/>
+    <circle cx="92" cy="75" r="6" fill="#0f172a"/>
+    <circle cx="60" cy="73" r="2" fill="#ffffff"/>
+    <circle cx="94" cy="73" r="2" fill="#ffffff"/>
+    <!-- Happy grin -->
+    <path d="M 64 90 Q 75 103 86 90" fill="none" stroke="#0f172a" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <text x="740" y="282" text-anchor="middle" fill="#6ee7b7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" font-weight="bold">Coder Gumdrop (Worker)</text>
+  <text x="740" y="302" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="12">Generates &amp; edits code in any language</text>
+</svg>

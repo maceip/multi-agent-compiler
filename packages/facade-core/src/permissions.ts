@@ -12,6 +12,12 @@ export interface PermissionContext {
   protectedFiles?: string[];
   /** Bridge episode authority: pinned gate argv allowed for Bash/world.run. */
   pinnedArgv?: string[][];
+  /**
+   * Interactive `run` mode only: commands the classifier recognizes are allowed
+   * without an explicit grant. Bridge episodes omit this so their authority stays
+   * exactly the pinned gates.
+   */
+  defaultCommandPolicy?: "classify";
 }
 
 export interface ToolRequest {
@@ -19,17 +25,30 @@ export interface ToolRequest {
   input: Record<string, unknown>;
 }
 
-const READONLY_BASH = new Set(["ls", "cat", "pwd", "echo", "printf", "true", "false", "test", "wc", "head", "tail", "file", "stat", "which", "rg", "grep", "git"]);
-const READONLY_GIT = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files"]);
+const READONLY_BASH = new Set(["ls", "cat", "pwd", "echo", "printf", "true", "false", "test", "wc", "head", "tail", "file", "stat", "which", "rg", "grep", "git", "find", "sort", "uniq", "diff", "basename", "dirname", "realpath", "du", "ps", "date", "env", "jq", "cut", "tr", "column", "tree"]);
+const READONLY_GIT = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "blame", "branch", "remote", "tag"]);
+
+/**
+ * Project build/test verbs. They write build caches and artifacts, never tracked
+ * source, and they are the project's own declared commands — so they are allowed
+ * by default rather than forcing a grant for every language. `rm`, `mv`, `cp`,
+ * `sed`, and anything unrecognized stay `unknown` and still require a grant.
+ */
+const BUILD_BASH = new Set([
+  "go", "gofmt", "cargo", "rustc", "rustfmt", "python", "python3", "pytest", "uv", "pip", "ruff", "mypy",
+  "npm", "npx", "pnpm", "yarn", "bun", "deno", "node", "make", "tsc", "javac", "java", "mvn", "gradle",
+  "dotnet", "swift", "ruby", "bundle", "bazel", "cmake", "ctest", "mix", "stack", "cabal", "ghc",
+]);
 
 export function classifyBash(argv: string[]): "readonly" | "mutating" | "unknown" {
   const cmd = argv[0];
   if (!cmd) return "unknown";
   const base = cmd.split("/").pop() ?? cmd;
-  if (!READONLY_BASH.has(base)) return "unknown";
-  if (base === "git") return READONLY_GIT.has(argv[1] ?? "") ? "readonly" : "unknown";
   if (argv.some((a) => a === ">" || a === ">>" || a.startsWith(">"))) return "unknown";
-  return "readonly";
+  if (base === "git") return READONLY_GIT.has(argv[1] ?? "") ? "readonly" : "unknown";
+  if (READONLY_BASH.has(base)) return "readonly";
+  if (BUILD_BASH.has(base)) return "mutating";
+  return "unknown";
 }
 
 function argvOf(req: ToolRequest): string[] | undefined {
@@ -72,6 +91,15 @@ export class PermissionService {
           return { kind: "allow", grantId: g.id, reason: `grant ${g.id} matches command prefix` };
         }
       }
+      if (ctx.defaultCommandPolicy === "classify") {
+        const kind = classifyBash(argv);
+        if (kind === "readonly") {
+          return { kind: "allow", grantId: "builtin-readonly", reason: `readonly command: ${joined}` };
+        }
+        if (kind === "mutating") {
+          return { kind: "allow", grantId: "builtin-build", reason: `project build/test command: ${joined}` };
+        }
+      }
       return { kind: "ask", reason: `no grant for command: ${joined}` };
     }
     const rel = pathOf(req);
@@ -108,6 +136,9 @@ export class PermissionService {
     for (const g of ctx.grants) {
       if (g.tool !== req.tool) continue;
       if (g.cwd !== undefined && g.cwd !== ctx.cwd) continue;
+      if (g.match === "." || g.match === "**") {
+        return { kind: "allow", grantId: g.id, reason: `grant ${g.id} covers the whole workspace` };
+      }
       if (rel === g.match || rel.startsWith(g.match.replace(/\/?$/, "/"))) {
         return { kind: "allow", grantId: g.id, reason: `grant ${g.id} matches path prefix` };
       }

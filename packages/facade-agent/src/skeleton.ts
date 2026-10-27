@@ -7,16 +7,30 @@ import type { ToolSpec } from "@zfacade/contracts";
  * Each ask is exactly one bounded model step in the driver; the loop lives
  * here so the engine sees every step as its own node.
  */
+const CODER_SYSTEM = [
+  "You are zfacade, a coding agent working inside one workspace directory.",
+  "Complete the task by calling tools. Each reply may call any number of them.",
+  "All paths are workspace-relative and must stay inside the workspace.",
+  "The project may be written in any language. Discover its conventions from its",
+  "own files and build configuration instead of assuming; never assume TypeScript.",
+  "Read the real files before changing them, and match the surrounding style.",
+  "After editing, verify by running the project's own build, vet, or test command.",
+  "If a command is denied, do not retry it verbatim; use an allowed equivalent.",
+  "When the task is complete and verified, reply with no tool calls at all and a",
+  "two-sentence summary of what you changed. Any reply with tool calls means you",
+  "are not finished. Do not restate the plan; just do the next step.",
+].join(" ");
+
 export const SKELETON_SOURCE = [
   'phase("coding");',
-  'const coder = agent("coder", { system: "You are the zfacade coding actor. Use tools to complete the task. Reply with a brief summary when done." });',
+  "const coder = agent(\"coder\", { system: " + JSON.stringify(CODER_SYSTEM) + " });",
   'const task = String(args.task ?? "");',
   "let stepText = await coder.ask(task);",
   "let step = JSON.parse(stepText);",
   "let guard = 0;",
   "while (!step.done && guard < 200) {",
   "  guard += 1;",
-  '  stepText = await coder.ask("Continue the task. Previous step: " + stepText);',
+  '  stepText = await coder.ask("Continue.");',
   "  step = JSON.parse(stepText);",
   "}",
   "return step;",
@@ -24,7 +38,7 @@ export const SKELETON_SOURCE = [
 ].join("\n");
 
 export const SKELETON_HASH = sha256Hex(SKELETON_SOURCE);
-export const SKELETON_VERSION = "skeleton-1";
+export const SKELETON_VERSION = "skeleton-2";
 
 export interface StepEnvelope {
   done: boolean;

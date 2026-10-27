@@ -7,6 +7,26 @@ import {
 } from "@zfacade/agent";
 import { buildProvider } from "./config-load.js";
 
+const QUIET_EVENTS = new Set(["node-queued", "node-dispatched", "usage-updated"]);
+
+/**
+ * One compact progress line per engine event; never includes model text.
+ * Returns undefined for events that carry no news worth a line of output.
+ */
+function describeEvent(event: unknown): string | undefined {
+  const e = (event ?? {}) as {
+    type?: unknown;
+    instance?: { siteId?: unknown; ordinal?: unknown };
+    outcome?: unknown;
+  };
+  const type = typeof e.type === "string" ? e.type : "event";
+  if (QUIET_EVENTS.has(type)) return undefined;
+  const siteId = typeof e.instance?.siteId === "string" ? e.instance.siteId : "";
+  const ordinal = typeof e.instance?.ordinal === "number" ? `#${e.instance.ordinal}` : "";
+  const status = typeof e.outcome === "string" ? ` ${e.outcome}` : "";
+  return siteId ? `${type} ${siteId}${ordinal}${status}` : type;
+}
+
 export interface RunOutcome {
   exitCode: number;
   status: string;
@@ -43,7 +63,18 @@ export async function runTask(opts: {
     if (!prepared.ok) throw new Error(`bundled skeleton failed to compile: ${JSON.stringify(prepared.diagnostics)}`);
     const driver = new BoundedDriver({
       store, runId, runRevision: `${runId}#1`, mode: "provider", provider,
-      permission: { workspaceRoot: store.workspacePath, cwd: store.workspacePath, grants: opts.config.grants ?? [] },
+      permission: {
+        workspaceRoot: store.workspacePath, cwd: store.workspacePath,
+        grants: opts.config.grants ?? [], defaultCommandPolicy: "classify",
+      },
+      ...(opts.onEvent
+        ? {
+            onEvent: (event: unknown) => {
+              const line = describeEvent(event);
+              if (line !== undefined) opts.onEvent!(line);
+            },
+          }
+        : {}),
     });
     const settlement = await executeRun({
       store, runId, scriptText: SKELETON_SOURCE, prepared, driver,
